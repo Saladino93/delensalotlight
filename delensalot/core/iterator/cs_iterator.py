@@ -34,7 +34,7 @@ from delensalot.utility.utils_hp import Alm, almxfl, alm2cl
 from delensalot.utility import utils_qe
 
 from delensalot.core import cachers
-from delensalot.core.cg import multigrid
+from plancklens.qcinv import multigrid
 from delensalot.core.opfilt import opfilt_base
 from delensalot.core.iterator import bfgs, steps
 

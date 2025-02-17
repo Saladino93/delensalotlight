@@ -5,17 +5,27 @@ from delensalot.utils import cli
 from delensalot.utils import read_map
 
 class nrstep(object):
-    def __init__(self, lmax_qlm:int, mmax_qlm:int, val=1.):
+    def __init__(self, lmax_qlm:int, mmax_qlm:int, val=1., vals = None):
         self.lmax_qlm = lmax_qlm
         self.mmax_qlm = mmax_qlm
         self.val = val
+        self.ones = np.ones(self.lmax_qlm + 1, dtype=float)
+        self.filt = lambda x: self.ones*x
+        self.vals = vals
 
     def steplen(self, itr, incrnorm):
         return self.val
 
-    def build_incr(self, incrlm, itr):
-        print('incr step val %.5f'%self.val)
-        return incrlm * self.val
+    #def build_incr(self, incrlm, itr):
+    #    print('incr step val %.5f'%self.val)
+    #    return incrlm * self.val
+    def build_incr(self, incrlm, itr, ncomps = 1):
+        fl = self.steplen(itr, incrlm)
+        if ncomps == 1:
+            incrlm = almxfl(incrlm, fl * self.filt(self.val), self.mmax_qlm, False)
+        else:
+            incrlm = np.concatenate([almxfl(incr, fl * self.filt(self.vals[idx]), self.mmax_qlm, False) for idx, incr in enumerate(np.split(incrlm, ncomps))])
+        return incrlm
 
 class harmonicbump(nrstep):
     def __init__(self, lmax_qlm, mmax_qlm, xa=400, xb=1500, a=0.5, b=0.1, scale=50, flt=None):
@@ -35,10 +45,12 @@ class harmonicbump(nrstep):
         return self.bp(np.arange(self.lmax_qlm + 1),xa, a, xb, b, scale=self.scale)
 
 
-    def build_incr(self, incrlm, itr):
+    def build_incr(self, incrlm, itr, ncomps = 1):
         fl = self.steplen(itr, incrlm)
-        # np.save('/mnt/c/Users/sebas/OneDrive/SCRATCH/delensalot/generic/sims_cmb_len_lminB200_mfda_maskedsky_center/p_p_sim0000/increment_it{}'.format(itr), incrlm)
-        almxfl(incrlm, fl * self.filt, self.mmax_qlm, True)
+        if ncomps == 1:
+            almxfl(incrlm, fl * self.filt, self.mmax_qlm, True)
+        else:
+            incrlm = np.concatenate([almxfl(incr, fl * self.filt, self.mmax_qlm, False) for incr in np.split(incrlm, ncomps)])
         return incrlm
 
     @staticmethod

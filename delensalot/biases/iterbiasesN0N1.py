@@ -108,7 +108,8 @@ class iterbiases:
         return {'cls_unl_fid':self.fidcls_unl, 'cls_noise_fid': self.fidcls_noise,
                 'lmax_qlm':self.lmax_qlm}
 
-    def get_n0n1(self, qe_key:str,  itrmax:int, cls_unl_true: dict or None, cls_noise_true:dict or None, fn:str or None=None, version:str = '', recache:bool = False):
+    def get_n0n1(self, qe_key:str,  itrmax:int, cls_unl_true: dict or None, cls_noise_true:dict or None, fn:str or None=None, version:str = '', recache:bool = False,
+                 source: str = "p"):
         """Returns n0s, n1s and true and fid responses
 
             Args:
@@ -130,7 +131,7 @@ class iterbiases:
 
             Note: N0 and N1 output are normalized with fiducial response
         """
-        assert qe_key in ['ptt', 'p_p', 'p'], "The qe_key should be in 'ptt', 'p_p' or 'p'"
+        assert qe_key in ['ptt', 'p_p', 'p', 'a_p'], "The qe_key should be in 'ptt', 'p_p' or 'p'"
 
         (nlev_t, nlev_p, beam, lmin_ivf, lmax_ivf, lmax_qlm) = self.config
         cls_unl_fid = self.fidcls_unl
@@ -149,11 +150,13 @@ class iterbiases:
                 fn = 'v' + version + fn
         if not self._cacher.is_cached(fn) or recache:
             fid_delcls, true_delcls = self.delcls(qe_key, itrmax, cls_unl_true, cls_noise_true, version=version)
-            N0_biased, N1_biased_spl, r_gg_fid, r_gg_true = cls2N0N1(qe_key, fid_delcls[-1], true_delcls[-1],
+            N0_biased, N1_biased_spl, r_gg_fid, r_gg_true, dat_cls = cls2N0N1(qe_key, fid_delcls[-1], true_delcls[-1],
                                                                 cls_noise_fid, cls_noise_true, lmin_ivf, lmax_ivf, lmax_qlm, doN1mat=False)
             self._cacher.cache(fn, np.array([N0_biased, N1_biased_spl, r_gg_fid, r_gg_true]))
-            return np.array([N0_biased, N1_biased_spl, r_gg_fid, r_gg_true])
-        return self._cacher.load(fn)
+            self._cacher.cache("delensed_cls", fid_delcls)
+            self._cacher.cache("delensed_dat_cls", dat_cls)
+            return np.array([N0_biased, N1_biased_spl, r_gg_fid, r_gg_true]), fid_delcls, dat_cls
+        return self._cacher.load(fn), self._cacher.load("delensed_cls"), self._cacher.load("delensed_dat_cls")
 
     def delcls(self, qe_key:str, itrmax:int, cls_unl_true: dict or None, cls_noise_true:dict or None, version:str = ''):
         """Returns fiducial and true partially delensed cls
@@ -191,7 +194,7 @@ def get_fals(qe_key:str, cls_cmb_filt:dict, cls_cmb_dat:dict, cls_noise_filt:dic
         cls_f: CMB response function (used to get the responses, depends on the data Cls)
 
     """
-    assert qe_key in ['ptt', 'p_p', 'p'], "The qe_key should be in 'ptt', 'p_p' or 'p'"
+    assert qe_key in ['ptt', 'p_p', 'p', 'a_p'], "The qe_key should be in 'ptt', 'p_p' or 'p', 'a_p'"
     lmin_tlm, lmin_elm, lmin_blm = _lmin_ivf(lmin_ivf)  
 
     fals = {}
@@ -200,7 +203,7 @@ def get_fals(qe_key:str, cls_cmb_filt:dict, cls_cmb_dat:dict, cls_noise_filt:dic
     if qe_key in ['ptt', 'p']:
         fals['tt'] = cls_cmb_filt['tt'][:lmax_ivf + 1] + cls_noise_filt['tt'][:lmax_ivf+1]
         dat_cls['tt'] = cls_cmb_dat['tt'][:lmax_ivf + 1] + cls_noise_dat['tt']
-    if qe_key in ['p_p', 'p']:
+    if qe_key in ['p_p', 'p', 'a_p']:
         fals['ee'] = cls_cmb_filt['ee'][:lmax_ivf + 1] + cls_noise_filt['ee'][:lmax_ivf+1]
         fals['bb'] = cls_cmb_filt['bb'][:lmax_ivf + 1] + cls_noise_filt['bb'][:lmax_ivf+1]
         dat_cls['ee'] = cls_cmb_dat['ee'][:lmax_ivf + 1] + cls_noise_dat['ee']
@@ -314,6 +317,12 @@ def get_delcls(qe_key: str, itermax:int, cls_unl_fid: dict, cls_unl_true:dict, c
             nls_plen_true =  dls2cls(lensed_cls(cls2dls(cls_noise_true)[0], cldd_fid))
 
         fal, dat_delcls, cls_w, cls_f = get_fals(qe_key, cls_plen_fid, cls_plen_true, nls_plen_fid, nls_plen_true, lmin_ivf, lmax_ivf)
+        dir = "sptdata/"
+        #dir = "sodata/"
+        np.save(f"{dir}fal_{it}.npy", fal)
+        np.save(f"{dir}dat_delcls_{it}.npy", dat_delcls)
+        np.save(f"{dir}cls_w_{it}.npy", cls_w)
+        np.save(f"{dir}cls_f_{it}.npy", cls_f)
 
         cls_ivfs_arr = utils.cls_dot([fal, dat_delcls, fal])
         cls_ivfs = dict()
@@ -357,7 +366,7 @@ def get_delcls(qe_key: str, itermax:int, cls_unl_fid: dict, cls_unl_true:dict, c
 
 
 
-def cls2N0N1(qe_key:str, cls_cmb_filt:dict, cls_cmb_dat:dict, cls_noise_filt:dict, cls_noise_dat:dict, lmin_ivf:int, lmax_ivf:int, lmax_qlm:int, doN1mat:bool = False):
+def cls2N0N1(qe_key:str, cls_cmb_filt:dict, cls_cmb_dat:dict, cls_noise_filt:dict, cls_noise_dat:dict, lmin_ivf:int, lmax_ivf:int, lmax_qlm:int, doN1mat:bool = False, source: str = "p"):
     """
         Returns QE N0 and N1 from input filtering and data cls
             Args:
@@ -420,6 +429,6 @@ def cls2N0N1(qe_key:str, cls_cmb_filt:dict, cls_cmb_dat:dict, cls_noise_filt:dic
     N1_biased_spl = spl(n1_Ls, n1_Ls ** 2 * (n1_Ls * 1. + 1) ** 2 * n1 / r_gg_fid[n1_Ls] ** 2, k=2,s=0, ext='zeros') (np.arange(len(N0_biased)))
     N1_biased_spl *= utils.cli(np.arange(lmax_qlm + 1) ** 2  * np.arange(1, lmax_qlm + 2, dtype=float) ** 2)
     if not doN1mat:
-        return N0_biased, N1_biased_spl, r_gg_fid, r_gg_true
+        return N0_biased, N1_biased_spl, r_gg_fid, r_gg_true, dat_cls
     else:
         return N0_biased, N1_biased_spl, r_gg_fid, r_gg_true, (n1_Ls, n1mat)
