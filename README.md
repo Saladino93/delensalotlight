@@ -6,7 +6,26 @@
 [![Integration tutorial](https://github.com/NextGenCMB/delensalot/actions/workflows/integration_tutorial.yaml/badge.svg?branch=sims&event=pull_request)](https://github.com/NextGenCMB/delensalot/actions/workflows/integration_tutorial.yaml)
 [![arXiv](https://img.shields.io/badge/arXiv-2310.06729-red)](https://arxiv.org/abs/2310.06729)
 
+# delensalotlight
+
+This is a fork of the full and original code https://github.com/NextGenCMB/delensalot (with all main contributions by Sebastian Belkner, Julien Carron, Louis Legrand). Initial development started from https://github.com/NextGenCMB/delensalot/tree/iterator_multi branch by Julien Carron.
+
+It was written to run code in https://github.com/Saladino93/jointmap
+
+The goal is to experiment the minimal possible code possible to run MAP reconstruction for CMB surveys. So, with time you will see less and less code here (hopefully).
+
+Please, refer and cite the original code too when using this fork.
+
+Not all the code there runs here, and vice-versa.
+
+## Updates
+
+* ..., foregrounds support
+* Feb 2025, support for polarization only reconstruction
+
+
 # delensalot
+
 Curved-sky iterative CMB lensing reconstruction and bias calculation.
 
 If you use delensalot for your work, please consider citing the ApJ publication [CMB-S4: Iterative internal delensing and r constraints](https://iopscience.iop.org/article/10.3847/1538-4357/ad2351).
