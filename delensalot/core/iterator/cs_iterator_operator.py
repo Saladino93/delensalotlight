@@ -68,8 +68,7 @@ class qlm_iterator(object):
                  chain_descr, stepper:steps.nrstep,
                  logger=None,
                  NR_method=100, tidy=0, verbose=True, soltn_cond=True, wflm0=None, _usethisE=None, 
-                 pp_h0s_matrix = None, inv_signal_matrix = None, 
-                 plm0_12 = None, sims_lib = None):
+                 pp_h0s_matrix = None, inv_signal_matrix = None, sims_lib = None):
         """Lensing map iterator
 
             The bfgs hessian updates are called 'hlm's and are either in plm, dlm or klm space

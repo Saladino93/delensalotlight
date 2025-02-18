@@ -12,6 +12,10 @@ TODO:
   #or just make all the functions in the same format. then it is even simpler
   #i will just pay the price at the end, but I think I am actually gaining here
   
+* To improve speed. IVF is calculated multiple times per secondary. Just calculate it once, and cache it somewhere. Better a different object/module to interface with. 
+
+* The Wiener filter has parts that could be cached. For example, if I do ABCX, and I calculate CX, I can cache it for later use. Need to think about this for speed.
+
 * Clean code
 
 * Rotation operator, just use complex notation
@@ -88,7 +92,9 @@ class Lensing(Operator):
     
 
     def get_qlms(self, filtr, eblm_dat: np.ndarray or list, elm_wf: np.ndarray, q_pbgeom: pbdGeometry, elm_wf_leg2:None or np.ndarray =None, which = "p", shift_1: int = 0, shift_2: int = 0, mean_field = False, filter_leg2 = None, cache = False):
-        """Get lensing generaliazed QE consistent with filter assumptions
+        """From delensalot.MAP filter:
+        
+            Get lensing generaliazed QE consistent with filter assumptions
 
             Args:
                 eblm_dat: input polarization maps (geom must match that of the filter)

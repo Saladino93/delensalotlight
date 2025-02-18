@@ -16,12 +16,11 @@ The goal is to experiment the minimal possible code possible to run MAP reconstr
 
 Please, refer and cite the original code too when using this fork.
 
-Not all the code there runs here, and vice-versa.
+Not all the code there runs here, and vice-versa.w
 
 ## Updates
 
-* ..., foregrounds support
-* Feb 2025, support for polarization only reconstruction
+* Feb 2025, support for polarization only reconstruction (now lensing, rotation, amplitude modulation) and temperature only (lensing, noise modulation)
 
 
 # delensalot
