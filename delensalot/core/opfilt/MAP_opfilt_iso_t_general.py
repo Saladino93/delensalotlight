@@ -9,6 +9,7 @@ import numpy as np
 
 from lenspyx import remapping
 from lenspyx.remapping import utils_geom
+from lenspyx.remapping.utils_geom import pbdGeometry
 from lenspyx.utils_hp import alm_copy
 
 from delensalot.utils import cli
@@ -16,6 +17,7 @@ from delensalot.utils import timer, clhash
 from delensalot.utility.utils_hp import almxfl, Alm, synalm
 from delensalot.core.opfilt import opfilt_base, QE_opfilt_iso_t
 from plancklens.sims import phas
+from delensalot.core.secondaries import secondaries
 
 
 fwd_op = QE_opfilt_iso_t.fwd_op
@@ -36,7 +38,8 @@ def _extend_cl(cl, lmax):
 
 
 class alm_filter_nlev_wl(opfilt_base.alm_filter_wl):
-    def __init__(self, nlev_t:float or np.ndarray, ffi:remapping.deflection, transf:np.ndarray, unlalm_info:tuple, lenalm_info:tuple, verbose=False, rescal=None, nlev_t_extended: float or np.ndarray = None, transf_extended: np.ndarray = None):
+    def __init__(self, ninv_geom:utils_geom.Geom, nlev_t:float or np.ndarray, transf:np.ndarray, unlalm_info:tuple, lenalm_info:tuple, verbose=False, rescal=None,
+                 operators = secondaries.Operators, nlev_t_2: float or np.ndarray = None, nlev_t_extended: float or np.ndarray = None, transf_extended: np.ndarray = None):
         r"""Version of alm_filter_ninv_wl for full-sky maps filtered with homogeneous noise levels
 
 
@@ -58,7 +61,7 @@ class alm_filter_nlev_wl(opfilt_base.alm_filter_wl):
         lmax_len, mmax_len = lenalm_info
         lmax_transf = len(transf) - 1
 
-        super(alm_filter_nlev_wl, self).__init__(lmax_sol, mmax_sol, ffi)
+        super(alm_filter_nlev_wl, self).__init__(lmax_sol, mmax_sol, None)
 
         self.lmax_len = min(lmax_len, lmax_transf)
         self.mmax_len = min(mmax_len, self.lmax_len)
@@ -82,6 +85,11 @@ class alm_filter_nlev_wl(opfilt_base.alm_filter_wl):
 
         self.verbose = verbose
         self.tim = timer(True, prefix='opfilt')
+    
+        self.operators = operators
+        self.ninv_geom = ninv_geom
+
+        self.noise_operator = secondaries.NoiseOperatorIsotropic(self.inoise_2, self.mmax_len)
 
 
     def hashdict(self):
@@ -118,37 +126,27 @@ class alm_filter_nlev_wl(opfilt_base.alm_filter_wl):
         assert lmax_unl == self.lmax_sol, (lmax_unl, self.lmax_sol)
         if self.dorescal:
             almxfl(tlm, self.rescali, self.mmax_sol, True)
-        tlmc = self.ffi.lensgclm(tlm, self.mmax_sol, 0, self.lmax_len, self.mmax_len)
-        almxfl(tlmc, self.inoise_2, self.mmax_len, True)
-        tlm[:] = self.ffi.lensgclm(tlmc, self.mmax_len, 0, self.lmax_sol, self.mmax_sol, backwards=True)
+        tlmc = self.operators(tlm, lmax_in = self.mmax_sol, spin = 0, lmax_out = self.lmax_len, mmax_out = self.lmax_len,
+                              backwards=False, q_pbgeom = self.ninv_geom)
+        ##almxfl(tlmc, self.inoise_2, self.mmax_len, True)
+        tlmc = self.noise_operator(tlmc)
+        tlm[:] = self.operators(tlmc, lmax_in = self.mmax_len, spin = 0, lmax_out = self.lmax_sol, mmax_out = self.mmax_sol,
+                                 backwards=True, q_pbgeom = self.ninv_geom, apply_weights = True)
+        
         if self.dorescal:
             almxfl(tlm, self.rescali, self.mmax_sol, True)
         # TODO: should add here the projection into cls > 0
+        return tlm
 
-    def get_qlms(self, tlm_dat: np.ndarray, tlm_wf: np.ndarray, q_pbgeom: utils_geom.pbdGeometry, alm_wf_leg2=None):
-        """Get lensing generaliazed QE consistent with filter assumptions
 
-            Args:
-                tlm_dat: input temperature data maps (geom must match that of the filter)
-                tlm_wf: Wiener-filtered T CMB map (alm arrays)
-                alm_wf_leg2: Gradient leg Wiener-filtered T CMB map (alm arrays), if different from ivf leg
-                q_pbgeom: lenspyx pbounded-geometry of for the position-space mutliplication of the legs
-
-            All implementation signs are super-weird but end result should be correct...
-
+    def get_qlms(self, tlm_dat: np.ndarray or list, tlm_wf: np.ndarray, q_pbgeom: pbdGeometry, alm_wf_leg2:None or np.ndarray =None, which = "p", shift_1: int = 0, shift_2: int = 0, mean_field = False, filter_leg2 = None, cache = False):
         """
-        assert Alm.getlmax(tlm_wf.size, self.mmax_sol) == self.lmax_sol, (Alm.getlmax(tlm_wf.size, self.mmax_sol), self.lmax_sol)
-        if alm_wf_leg2 is None:
-            d1 = self._get_irestmap(tlm_dat, tlm_wf, q_pbgeom) * self._get_gtmap(tlm_wf, q_pbgeom)
-        else:
-            assert Alm.getlmax(alm_wf_leg2.size, self.mmax_sol) == self.lmax_sol, (Alm.getlmax(alm_wf_leg2.size, self.mmax_sol), self.lmax_sol)
-            d1 = self._get_irestmap(tlm_dat, tlm_wf, q_pbgeom) * self._get_gtmap(alm_wf_leg2, q_pbgeom)
-        G, C = q_pbgeom.geom.map2alm_spin(d1, 1, self.ffi.lmax_dlm, self.ffi.mmax_dlm, self.ffi.sht_tr, (-1., 1.))
-        del d1
-        fl = - np.sqrt(np.arange(self.ffi.lmax_dlm + 1, dtype=float) * np.arange(1, self.ffi.lmax_dlm + 2))
-        almxfl(G, fl, self.ffi.mmax_dlm, True)
-        almxfl(C, fl, self.ffi.mmax_dlm, True)
-        return G, C
+        If you want to get a disconnected part, you do this: 
+        0.5*[qlms(shift_A, shift_B)+qlms(shift_B, shift_A)]
+        """
+        assert which in ["p", "a", "f"], print("Operator must be one of 'p', 'a', 'f' ")
+
+        return self.operators.get(which = which).get_qlms(self, tlm_dat, tlm_wf, q_pbgeom, alm_wf_leg2, which = which, shift_1 = shift_1, shift_2 = shift_2, mean_field = mean_field, filter_leg2 = filter_leg2, cache = cache)
     
     def get_unit_variance(self):
         """Returns a unit vairance phase, useful for phase cancellation to reduce MF sims variance"""
@@ -179,13 +177,76 @@ class alm_filter_nlev_wl(opfilt_base.alm_filter_wl):
             return tlm, tlm_unl 
         else:
             return tlm
-
-    def get_qlms_mf(self, mfkey, q_pbgeom:utils_geom.pbdGeometry, mchain, phas=None, noise_phas=None, cls_filt:dict or None=None):
+        
+    def get_qlms_mf(self, h, mfkey, q_pbgeom:pbdGeometry, mchain, lmax_qlm, mmax_qlm, phas=None, cls_filt:dict or None=None):
         """Mean-field estimate using tricks of Carron Lewis appendix
         Returns  g^MF = <g^QD> 
         It should be correlated to -phi^{input}
-
         """
+        if mfkey in [1]: # This should be B^t x, D dC D^t B^t Covi x, x random phases in alm space
+            if phas is None:
+                phas = synalm(np.ones(self.lmax_len + 1, dtype=float), self.lmax_len, self.mmax_len)
+            
+            phas = alm_copy(phas, None, self.lmax_len, self.mmax_len)
+            assert Alm.getlmax(phas.size, self.mmax_len) == self.lmax_len
+
+            soltn = np.zeros(Alm.getsize(self.lmax_sol, self.mmax_sol), dtype=complex)
+            mchain.solve(soltn, phas, dot_op=self.dot_op()) # X^WF
+
+            almxfl(phas,  self.transf, self.mmax_len, True) # B^t X
+            
+            # phas is basically IVF leg
+            # soltn is the WF leg
+            G_total = []
+        
+            mean_field = True
+            
+            for o in self.operators:
+                which = o.name
+                if which == 'p':
+                    G, C = self.get_qlms(phas, soltn, q_pbgeom, which=which, mean_field=mean_field)
+                    almxfl(G, self._h2p(h, lmax_qlm), mmax_qlm, True)
+                    almxfl(C, self._h2p(h, lmax_qlm), mmax_qlm, True)
+                    G_total.append(G)
+                    
+                    if "o" in self.operators.names:
+                        G_total.append(C)
+                        
+                elif which == 'o':
+                    if "p" not in self.operators.names:
+                        G, C = self.get_qlms(phas, soltn, q_pbgeom, which=which, mean_field=mean_field)
+                        almxfl(C, self._h2p(h, lmax_qlm), mmax_qlm, True)
+                        G_total.append(C)
+                    else:
+                        print("Skip gradient o, already added.")
+                else:
+                    G = self.get_qlms(phas, soltn, q_pbgeom, which=which, mean_field=mean_field)
+                    G_total.append(G)
+            
+        elif mfkey in [0]: # standard gQE, quite inefficient but simple
+            assert phas is None, 'discarding this phase anyways'
+            tlm_dat = self.synalm(cls_filt)
+            soltn = np.zeros(Alm.getsize(self.lmax_sol, self.mmax_sol), dtype=complex)
+            mchain.solve(soltn, tlm_dat, dot_op=self.dot_op())
+            
+            G_total = []
+            for o in self.operators:
+                which = o.name
+                if which in ['p', 'o']:
+                    G, C = self.get_qlms(tlm_dat, soltn, q_pbgeom, which=which)
+                    if which == 'p':
+                        G_total.append(G)
+                        if "o" in self.operators.names:
+                            G_total.append(C)
+                    elif which == 'o' and "p" not in self.operators.names:
+                        G_total.append(C)
+                else:
+                    G = self.get_qlms(tlm_dat, soltn, q_pbgeom, which=which)
+                    G_total.append(G)
+                    
+            return np.array(G_total)
+
+
         if mfkey in [1]: # This should be B^t x, D dC D^t B^t Covi x, x random phases in alm space
             if phas is None:
                 phas = synalm(np.ones(self.lmax_len + 1, dtype=float), self.lmax_len, self.mmax_len)
@@ -252,7 +313,7 @@ class alm_filter_nlev_wl(opfilt_base.alm_filter_wl):
 
         return grad_MF * sumwf
         
-    def _get_irestmap(self, tlm_dat:np.ndarray, tlm_wf:np.ndarray, q_pbgeom:utils_geom.pbdGeometry):
+    def _get_irestmap(self, tlm_dat:np.ndarray, tlm_wf:np.ndarray, q_pbgeom:utils_geom.pbdGeometry, map_out=None, which = "p", shift: int = 0, mean_field = False):
         """Builds inverse variance weighted map to feed into the QE
 
 
@@ -260,11 +321,15 @@ class alm_filter_nlev_wl(opfilt_base.alm_filter_wl):
 
 
         """
-        twf = tlm_dat - almxfl(self.ffi.lensgclm(tlm_wf, self.mmax_sol, 0, self.lmax_len, self.mmax_len), self.transf, self.mmax_len, False)
+        if mean_field:
+            return q_pbgeom.geom.synthesis(tlm_dat, 0, self.lmax_len, self.mmax_len, self.operators.sht_tr, map=map_out)
+        tlm_wf_r = tlm_wf.copy()
+        tlm_wf_r = self.operators(tlm_wf_r, lmax_in = self.mmax_sol, spin = 0, lmax_out = self.lmax_len, mmax_out = self.mmax_len, q_pbgeom = self.ninv_geom, ignore = ["o"] if which == "p" else [])
+        twf = tlm_dat - almxfl(tlm_wf_r, self.transf, self.mmax_len, False)
         almxfl(twf, self.inoise_1, self.mmax_len, True)
-        return q_pbgeom.geom.alm2map(twf, self.lmax_len, self.mmax_len, self.ffi.sht_tr, (-1., 1.))
+        return q_pbgeom.geom.alm2map(twf, self.lmax_len, self.mmax_len, self.operators.sht_tr, (-1., 1.))
 
-    def _get_gtmap(self, tlm_wf:np.ndarray, q_pbgeom:utils_geom.pbdGeometry):
+    def _get_gtmap(self, tlm_wf:np.ndarray, q_pbgeom:utils_geom.pbdGeometry, which = "p", shift: int = 0):
         """Wiener-filtered gradient leg to feed into the QE
 
 
@@ -273,9 +338,10 @@ class alm_filter_nlev_wl(opfilt_base.alm_filter_wl):
 
         """
         assert Alm.getlmax(tlm_wf.size, self.mmax_sol) == self.lmax_sol, ( Alm.getlmax(tlm_wf.size, self.mmax_sol), self.lmax_sol)
-        fl = -np.sqrt(np.arange(self.lmax_sol + 1) * np.arange(1, self.lmax_sol + 2))
-        ffi = self.ffi.change_geom(q_pbgeom) if q_pbgeom is not self.ffi.pbgeom else self.ffi
-        return ffi.gclm2lenmap([almxfl(tlm_wf, fl, self.mmax_sol, False), np.zeros_like(tlm_wf)], self.mmax_sol, 1, False)
+        #return ffi.gclm2lenmap([almxfl(tlm_wf, fl, self.mmax_sol, False), np.zeros_like(tlm_wf)], self.mmax_sol, 1, False)
+        lmax = Alm.getlmax(tlm_wf.size, self.mmax_sol)
+        result = self.operators(tlm = tlm_wf, backwards = False, lmax_in = lmax, spin = 0, lmax_out = self.mmax_sol, q_pbgeom = self.ninv_geom if which not in ["p", "o"] else q_pbgeom, which = which, ignore = ["o"] if which == "p" else []) #NOTE: CHECK IGNORE
+        return result
 
 
 def calc_prep(tlm:np.ndarray, s_cls:dict, ninv_filt:alm_filter_nlev_wl, sht_threads:int=4):
@@ -291,6 +357,8 @@ def calc_prep(tlm:np.ndarray, s_cls:dict, ninv_filt:alm_filter_nlev_wl, sht_thre
     assert isinstance(tlm, np.ndarray)
     assert Alm.getlmax(tlm.size, ninv_filt.mmax_len) == ninv_filt.lmax_len, (Alm.getlmax(tlm.size, ninv_filt.mmax_len), ninv_filt.lmax_len)
     tlmc = almxfl(tlm, ninv_filt.inoise_1, ninv_filt.mmax_len, False)
-    tlmc = ninv_filt.ffi.lensgclm(tlmc, ninv_filt.mmax_len, 0, ninv_filt.lmax_sol, ninv_filt.mmax_sol, backwards=True)
+    #tlmc = ninv_filt.ffi.lensgclm(tlmc, ninv_filt.mmax_len, 0, ninv_filt.lmax_sol, ninv_filt.mmax_sol, backwards=True)
+    tlmc = ninv_filt.operators(tlmc, lmax_in = ninv_filt.mmax_len, spin = 0, lmax_out = ninv_filt.lmax_sol, mmax_out = ninv_filt.mmax_sol,
+                                      backwards = True, q_pbgeom = ninv_filt.ninv_geom, apply_weights = True).squeeze()
     almxfl(tlmc, ninv_filt.rescali * (s_cls['tt'][:ninv_filt.lmax_sol + 1] > 0.), ninv_filt.mmax_sol, True)
     return tlmc
