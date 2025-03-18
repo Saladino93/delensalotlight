@@ -107,43 +107,71 @@ class Operator():
 
 
 
-class AmplitudeModulation(Operator):
 
-    def __init__(self, name: str, lmax: int, mmax: int, sht_tr: int, disable: bool = False):
-        super().__init__(name, lmax, mmax, sht_tr, disable)
-        self.amplitude = None
 
-    def __call__(self, eblm, backwards = False, derivative = False, spin = None, q_pbgeom = None, 
-                 lmax_in = None, lmax_out = None, mmax_out = None, out_sht_mode = "STANDARD", apply_weights = True, out_real = False):
+
+class OperatorsT():
+    def __init__(self, operators_order = [], ignore_calling: List[str] = []):
+        self.operators_order = operators_order
+        self._names = [op.name for op in self.operators_order]
+        self.sht_tr = min([op.sht_tr for op in self.operators_order])
+        assert set(ignore_calling) <= set(self._names), f"ignore_calling must be a subset of {self._names}"
+        self.ignore_calling = ignore_calling
+        self.not_ignored = [op.name for op in self.operators_order if op.name not in self.ignore_calling]
+
+
+    def get(self, which = ""):
+        for op in self.operators_order:
+            if op.name == which:
+                return op
+        return None
+
+    def apply_operators(self, tlm, which = "", backwards = False, ignore = [], **kwargs):
+        lista = self.operators_order if not backwards else self.operators_order[::-1]
+        lista_not_ignored_names = self.not_ignored if not backwards else self.not_ignored[::-1]
+        #remove which from ignored
         
-        assert q_pbgeom is not None, "q_pbgeom cannot be None"
-
-        pass
-
-    def set_amplitude(self, amplitude):
-        pass
-
-    def set_field(self, field):
-        self.set_amplitude(field)
+        for op in lista:
+            if (op.name in ignore) or (op.name in self.ignore_calling):
+                continue
+            signature = inspect.signature(op.__call__)
+            parameters = signature.parameters
+            filtered_kwargs = {key: kwargs[key] for key in parameters if key in kwargs}
+            out_real = (op.name == lista_not_ignored_names[-1]) and (which != "")
+            tlm = op(tlm, derivative = (op.name == which), backwards = backwards, out_real = out_real, **filtered_kwargs)
+        
+        return tlm
+    
+    def __call__(self, tlm, which = "", backwards = False, ignore = [], **kwargs):
+        return self.apply_operators(tlm, which = which, backwards = backwards, ignore = ignore, **kwargs)
+    
+    def set_field(self, field, which = ""):
+        for op in self.operators_order:
+            if op.name == which:
+                op.set_field(field)
+                break
 
     @property
-    def field(self):
-        return self.amplitude
+    def names(self):
+        return self._names
 
-    def amplitude(self, QU, backwards=False):
-        if self.amplitude is not None:
-            return self._multiply(QU, self.amplitude if not backwards else self.amplitude)
-        else:
-            return QU
+    def __len__(self):
+        return len(self.operators_order)
 
-    def derivative_amplitude(self, QU):
-        pass
+    def __getitem__(self, index):
+        return self.operators_order[index]
+
+    def __iter__(self):
+        return iter(self.operators_order)
     
-    @staticmethod
-    def _multiply(a, b):
-        return np.einsum('ab, b -> ab', a, b)
-    
+    def lmax(self, which = ""):
+        for op in self.operators_order:
+            if op.name == which:
+                return op.lmax
+        return 0
 
-    def get_qlms(self, filtr, eblm_dat: np.ndarray or list, elm_wf: np.ndarray, q_pbgeom, alm_wf_leg2:None or np.ndarray =None, which = "f", shift_1: int = 0, shift_2: int = 0, mean_field = False, filter_leg2 = None, cache = False):
-        pass
-
+    def mmax(self, which = ""):
+        for op in self.operators_order:
+            if op.name == which:
+                return op.mmax
+        return 0

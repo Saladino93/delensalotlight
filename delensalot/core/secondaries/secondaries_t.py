@@ -19,7 +19,7 @@ TODO:
 * Clean code
 
 """
-from delensalot.core.secondaries.operators import Operator, randomize, fg_phases
+from delensalot.core.secondaries.operators import Operator, OperatorsT, randomize, fg_phases
 
 import numpy as np
 from lenspyx.utils_hp import almxfl, Alm
@@ -52,7 +52,7 @@ class Lensing(Operator):
                 print("Lensing is disabled")
                 return tlm
             
-            result = self.ffi.lensgclm(tlm, lmax_in, 0, lmax_out, mmax_out)
+            result = self.ffi.lensgclm(tlm, lmax_in, spin, lmax_out, mmax_out, backwards = backwards)
             if out_real:
                  result = q_pbgeom.synthesis(result.astype(np.complex128).copy(), 0, lmax_out, mmax_out, self.sht_tr)
             return result
@@ -73,16 +73,16 @@ class Lensing(Operator):
         assert spin in [0], spin
 
         lmax = Alm.getlmax(tlm_wf.size, mmax_sol)
-        i1, i2 = (0, 0)
+        i1, i2 = (0, 1)
         fl = np.arange(i1, lmax + i1 + 1, dtype=float) * np.arange(i2, lmax + i2 + 1)
         fl[:spin] *= 0. #spin should be zero
-        fl = np.sqrt(fl)
+        fl = -np.sqrt(fl)
         tlm = almxfl(tlm_wf, fl, mmax_sol, False)
         
         ffi = self.ffi.change_geom(q_pbgeom) if q_pbgeom is not self.ffi.pbgeom else self.ffi
-        result = ffi.gclm2lenmap(tlm, mmax_sol, spin, False)
+        result = ffi.gclm2lenmap([tlm, np.zeros_like(tlm)], mmax_sol, 1, False)
 
-        result = q_pbgeom.adjoint_synthesis(result, 0, mmax_sol, mmax_sol, self.sht_tr,
+        result = q_pbgeom.adjoint_synthesis(result, 1, mmax_sol, mmax_sol, self.sht_tr,
                                                 apply_weights = True) if not out_real else result
         return result
     
@@ -113,7 +113,7 @@ class Lensing(Operator):
         assert Alm.getlmax(tlm_wf_leg2.size, filter_leg2.mmax_sol) == filter_leg2.lmax_sol, (Alm.getlmax(tlm_wf_leg2.size, filter_leg2.mmax_sol), filter_leg2.lmax_sol)
 
         ivf = filtr._get_irestmap(tlm_dat, tlm_wf, q_pbgeom)
-        gwf = filtr._get_gtmap(tlm_wf_leg2, q_pbgeom)
+        gwf = filtr._get_gtmap(tlm_wf_leg2, q_pbgeom.geom)
 
         ivf = randomize(filtr, ivf, shift = shift_1)
         gwf = randomize(filter_leg2, gwf, shift = shift_2)
@@ -188,6 +188,114 @@ class NoiseModulation(AmplitudeModulation):
         G = q_pbgeom.geom.map2alm(d1, self.ffi.lmax_dlm, self.ffi.mmax_dlm, self.ffi.sht_tr, (-1., 1.))
         
         return G
+
+#decorator class that works with a lognormal variable
+class LogNormal():
+    def __init__(self, mean, std):
+        self.mean = mean
+        self.std = std
+
+    def __call__(self, x):
+        return np.exp(x)
+
+
+class NoiseOperator(Operator):
+    def __init__(self, name, lmax, mmax, sht_tr, disable: bool = False, geom = None, transf = None, inoise_2 = None, n_inv = None, lognormal = False):
+        self.geom = geom
+        self.transf = transf
+        self.mmax = mmax
+        self.lmax = lmax
+        self.disable = disable
+        self.sht_tr = sht_tr
+        self.name = name
+        self.inoise_2 = inoise_2
+        self.n_inv = n_inv
+        self.lognormal = lognormal
+        assert self.inoise_2 is None or self.n_inv is None, "Cannot have both inoise_2 and n_inv"
+
+    def set_field(self, field):
+        self.field = field
+        if self.inoise_2 is None:
+            noise_op = NoiseOperatorAnisotropic(self.n_inv, self.mmax, self.lognormal)
+            noise_op.set_field(self.field)
+            self.noise_op = noise_op
+        else:
+            self.noise_op = NoiseOperatorIsotropic(self.inoise_2, self.mmax)
+
+    def __call__(self, tlm, lmax_in, spin, lmax_out, mmax_out = None, gclm_out = None, backwards = False, 
+                 out_sht_mode: str = 'STANDARD', derivative = False, q_pbgeom = None, out_real = False):
+        return tlm
+
+    def apply_noise(self, tlm):
+        """
+        Applies B^T N^{-1} B
+        """
+        if self.inoise_2 is not None:
+            return self.noise_op(tlm)
+        else:
+            tlm = almxfl(tlm, self.transf, self.mmax, inplace=False)
+            tmap = self.geom.synthesis(tlm, 0, self.lmax, self.mmax, self.sht_tr)
+            tmap = self.noise_op(tmap)
+            tlm = self.geom.adjoint_synthesis(tmap, 0, self.lmax, self.mmax, self.sht_tr, apply_weights=False).squeeze()
+            return tlm
+
+    def get_qlms(self, filtr, tlm_dat: np.ndarray or list, tlm_wf: np.ndarray, q_pbgeom: pbdGeometry, tlm_wf_leg2:None or np.ndarray =None, which = "p", shift_1: int = 0, shift_2: int = 0, mean_field = False, filter_leg2 = None, cache = False):
+        """This is to estimate a noise anisotropy.
+        """
+
+        #assert alm_wf_leg2 is None
+        if tlm_wf_leg2 is None:
+            tlm_wf_leg2 = tlm_wf.copy()
+
+        if filter_leg2 is None:
+            filter_leg2 = filtr
+        
+        assert Alm.getlmax(tlm_wf.size, filtr.mmax_sol) == filtr.lmax_sol, (Alm.getlmax(tlm_wf.size, filtr.mmax_sol), filtr.lmax_sol)
+        assert Alm.getlmax(tlm_wf_leg2.size, filter_leg2.mmax_sol) == filter_leg2.lmax_sol, (Alm.getlmax(tlm_wf_leg2.size, filter_leg2.mmax_sol), filter_leg2.lmax_sol)
+
+        ivf = filtr._get_irestmap(tlm_dat, tlm_wf, q_pbgeom)
+
+        if not np.allclose(tlm_wf_leg2, tlm_wf):
+            ivf2 = filter_leg2._get_irestmap(tlm_dat, tlm_wf_leg2, q_pbgeom)
+            ivf2 = randomize(filter_leg2, ivf2, shift = shift_2)
+        else:
+            ivf = randomize(filtr, ivf, shift = shift_1)
+            ivf2 = ivf
+
+        d1 = ivf*ivf2
+
+        lmax_qlm, mmax_qlm = filtr.operators.lmax(which = which), filtr.operators.mmax(which = which)
+        #G, C = q_pbgeom.geom.adjoint_synthesis(d1, 1, lmax_qlm, mmax_qlm, filtr.operators.sht_tr)
+        G = q_pbgeom.geom.map2alm(d1, self.ffi.lmax_dlm, self.ffi.mmax_dlm, self.ffi.sht_tr, (-1., 1.))
+        
+        return G
+        
+
+class NoiseOperatorIsotropic():
+    def __init__(self, inoise_2, mmax_len):
+        self.inoise_2 = inoise_2
+        self.mmax_len = mmax_len
+    def __call__(self, tlmc):
+        return hp.almxfl(tlmc, self.inoise_2, self.mmax_len)
+    
+
+class NoiseOperatorAnisotropic():
+    def __init__(self, n_inv, mmax_len, lognormal = False):
+        self.noise_inv_0 = n_inv #isotropic inverse noise variance
+        self.noise = n_inv**-1. #isotropic noise variance
+        self.mmax_len = mmax_len
+        self.lognormal = lognormal
+
+    def _process_noise(self, noise):
+        return np.exp(noise) if self.lognormal else noise
+
+    def set_field(self, field):
+        self.noise_aniso = self._process_noise(field) #gets the anisotropic noise part
+        noise = self.noise * self.noise_aniso #gets the anisotropic inverse noise variance
+        self.noise_inv = noise**-1. #gets the anisotropic noise variance
+
+    def __call__(self, tmap):
+        return tmap*self.noise_inv
 
 
 class Source(Operator):
