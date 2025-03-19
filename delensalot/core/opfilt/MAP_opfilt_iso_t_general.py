@@ -89,8 +89,6 @@ class alm_filter_nlev_wl(opfilt_base.alm_filter_wl):
         self.operators = operators
         self.ninv_geom = ninv_geom
 
-        self.noise_operator = secondaries.NoiseOperatorIsotropic(self.inoise_2, self.mmax_len)
-
 
     def hashdict(self):
         return {'transf': clhash(self.transf), 'inoise2':clhash(self.inoise_2),
@@ -129,7 +127,7 @@ class alm_filter_nlev_wl(opfilt_base.alm_filter_wl):
         tlmc = self.operators(tlm, lmax_in = self.mmax_sol, spin = 0, lmax_out = self.lmax_len, mmax_out = self.lmax_len,
                               backwards=False, q_pbgeom = self.ninv_geom)
         ##almxfl(tlmc, self.inoise_2, self.mmax_len, True)
-        tlmc = self.noise_operator(tlmc)
+        tlmc = self.noise_operator.apply_noise(tlmc)
         tlm[:] = self.operators(tlmc, lmax_in = self.mmax_len, spin = 0, lmax_out = self.lmax_sol, mmax_out = self.mmax_sol,
                                  backwards=True, q_pbgeom = self.ninv_geom, apply_weights = True)
         
@@ -325,8 +323,11 @@ class alm_filter_nlev_wl(opfilt_base.alm_filter_wl):
             return q_pbgeom.geom.synthesis(tlm_dat, 0, self.lmax_len, self.mmax_len, self.operators.sht_tr, map=map_out)
         tlm_wf_r = tlm_wf.copy()
         tlm_wf_r = self.operators(tlm_wf_r, lmax_in = self.mmax_sol, spin = 0, lmax_out = self.lmax_len, mmax_out = self.mmax_len, q_pbgeom = self.ninv_geom, ignore = ["o"] if which == "p" else [])
-        twf = tlm_dat - almxfl(tlm_wf_r, self.transf, self.mmax_len, False)
-        almxfl(twf, self.inoise_1, self.mmax_len, True)
+        tlm_wf_r = almxfl(tlm_wf_r, self.transf, self.mmax_len, False)
+        tlm_wf_r = self.noise_operator.transform(tlm_wf_r) #basically if I am doing isotropic, this is identiy, otherwise a harmonic synthesis
+        twf = tlm_dat - tlm_wf_r #if isotropic these are alms, otherwise real maps
+        twf = self.noise_operator.apply_noise_1(twf)
+        #almxfl(twf, self.inoise_1, self.mmax_len, True)
         return q_pbgeom.geom.alm2map(twf, self.lmax_len, self.mmax_len, self.operators.sht_tr, (-1., 1.))
 
     def _get_gtmap(self, tlm_wf:np.ndarray, q_pbgeom:utils_geom.pbdGeometry, which = "p", shift: int = 0):
@@ -355,10 +356,10 @@ def calc_prep(tlm:np.ndarray, s_cls:dict, ninv_filt:alm_filter_nlev_wl, sht_thre
 
     """
     assert isinstance(tlm, np.ndarray)
-    assert Alm.getlmax(tlm.size, ninv_filt.mmax_len) == ninv_filt.lmax_len, (Alm.getlmax(tlm.size, ninv_filt.mmax_len), ninv_filt.lmax_len)
-    tlmc = almxfl(tlm, ninv_filt.inoise_1, ninv_filt.mmax_len, False)
-    #tlmc = ninv_filt.ffi.lensgclm(tlmc, ninv_filt.mmax_len, 0, ninv_filt.lmax_sol, ninv_filt.mmax_sol, backwards=True)
+    
+    tlmc = ninv_filt.noise_operator.apply_noise_1(tlm)
     tlmc = ninv_filt.operators(tlmc, lmax_in = ninv_filt.mmax_len, spin = 0, lmax_out = ninv_filt.lmax_sol, mmax_out = ninv_filt.mmax_sol,
                                       backwards = True, q_pbgeom = ninv_filt.ninv_geom, apply_weights = True).squeeze()
     almxfl(tlmc, ninv_filt.rescali * (s_cls['tt'][:ninv_filt.lmax_sol + 1] > 0.), ninv_filt.mmax_sol, True)
     return tlmc
+

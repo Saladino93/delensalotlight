@@ -200,7 +200,7 @@ class LogNormal():
 
 
 class NoiseOperator(Operator):
-    def __init__(self, name, lmax, mmax, sht_tr, disable: bool = False, geom = None, transf = None, inoise_2 = None, n_inv = None, lognormal = False):
+    def __init__(self, name, lmax, mmax, sht_tr, disable: bool = False, geom = None, transf = None, inoise = None, n_inv = None, lognormal = False):
         self.geom = geom
         self.transf = transf
         self.mmax = mmax
@@ -208,36 +208,61 @@ class NoiseOperator(Operator):
         self.disable = disable
         self.sht_tr = sht_tr
         self.name = name
-        self.inoise_2 = inoise_2
+        self.inoise = inoise
         self.n_inv = n_inv
         self.lognormal = lognormal
-        assert self.inoise_2 is None or self.n_inv is None, "Cannot have both inoise_2 and n_inv"
+        assert self.inoise is None or self.n_inv is None, "Cannot have both inoise and n_inv"
+
+    @property
+    def field(self):
+        return self.noise_field
 
     def set_field(self, field):
-        self.field = field
-        if self.inoise_2 is None:
+        self.noise_field = field
+        if self.inoise is None:
             noise_op = NoiseOperatorAnisotropic(self.n_inv, self.mmax, self.lognormal)
-            noise_op.set_field(self.field)
+            noise_op.set_field(self.noise_field)
             self.noise_op = noise_op
         else:
-            self.noise_op = NoiseOperatorIsotropic(self.inoise_2, self.mmax)
+            self.noise_op = NoiseOperatorIsotropic(self.inoise, self.mmax)
 
     def __call__(self, tlm, lmax_in, spin, lmax_out, mmax_out = None, gclm_out = None, backwards = False, 
                  out_sht_mode: str = 'STANDARD', derivative = False, q_pbgeom = None, out_real = False):
         return tlm
+    
+    def transform(self, tlm):
+        if self.inoise is None:
+            return self.geom.synthesis(tlm, 0, self.lmax, self.mmax, self.sht_tr).squeeze()
+        else:
+            return tlm
 
     def apply_noise(self, tlm):
         """
         Applies B^T N^{-1} B
         """
-        if self.inoise_2 is not None:
-            return self.noise_op(tlm)
+        
+        tlm = almxfl(tlm, self.transf, self.mmax, inplace=False)
+
+        if self.inoise is not None:
+            tlm = self.noise_op(tlm)
         else:
-            tlm = almxfl(tlm, self.transf, self.mmax, inplace=False)
             tmap = self.geom.synthesis(tlm, 0, self.lmax, self.mmax, self.sht_tr)
             tmap = self.noise_op(tmap)
             tlm = self.geom.adjoint_synthesis(tmap, 0, self.lmax, self.mmax, self.sht_tr, apply_weights=False).squeeze()
-            return tlm
+
+        tlm = almxfl(tlm, self.transf, self.mmax, inplace=False)
+
+        return tlm
+        
+    def apply_noise_1(self, tlm):
+        if self.inoise is not None:
+            tlm = self.noise_op(tlm)
+        else:
+            tmap = tlm
+            tmap = self.noise_op(tmap)
+            tlm = self.geom.adjoint_synthesis(tmap, 0, self.lmax, self.mmax, self.sht_tr, apply_weights=False).squeeze()
+        tlm = almxfl(tlm, self.transf, self.mmax, inplace=False)
+        return tlm
 
     def get_qlms(self, filtr, tlm_dat: np.ndarray or list, tlm_wf: np.ndarray, q_pbgeom: pbdGeometry, tlm_wf_leg2:None or np.ndarray =None, which = "p", shift_1: int = 0, shift_2: int = 0, mean_field = False, filter_leg2 = None, cache = False):
         """This is to estimate a noise anisotropy.
@@ -267,31 +292,34 @@ class NoiseOperator(Operator):
         lmax_qlm, mmax_qlm = filtr.operators.lmax(which = which), filtr.operators.mmax(which = which)
         #G, C = q_pbgeom.geom.adjoint_synthesis(d1, 1, lmax_qlm, mmax_qlm, filtr.operators.sht_tr)
         G = q_pbgeom.geom.map2alm(d1, self.ffi.lmax_dlm, self.ffi.mmax_dlm, self.ffi.sht_tr, (-1., 1.))
-        
+
+        if self.lognormal:
+            factor = np.exp(self.field)
+            G *= factor
         return G
         
 
 class NoiseOperatorIsotropic():
-    def __init__(self, inoise_2, mmax_len):
-        self.inoise_2 = inoise_2
+    def __init__(self, inoise, mmax_len):
+        self.inoise = inoise
         self.mmax_len = mmax_len
     def __call__(self, tlmc):
-        return hp.almxfl(tlmc, self.inoise_2, self.mmax_len)
+        return hp.almxfl(tlmc, self.inoise, self.mmax_len)
     
 
 class NoiseOperatorAnisotropic():
     def __init__(self, n_inv, mmax_len, lognormal = False):
         self.noise_inv_0 = n_inv #isotropic inverse noise variance
-        self.noise = n_inv**-1. #isotropic noise variance
+        self.noise_0 = n_inv**-1. #isotropic noise variance
         self.mmax_len = mmax_len
         self.lognormal = lognormal
 
     def _process_noise(self, noise):
-        return np.exp(noise) if self.lognormal else noise
+        return np.exp(noise) if self.lognormal else np.ones_like(noise) #for now, only anisotropic part is through lognormal
 
     def set_field(self, field):
         self.noise_aniso = self._process_noise(field) #gets the anisotropic noise part
-        noise = self.noise * self.noise_aniso #gets the anisotropic inverse noise variance
+        noise = self.noise_0 * self.noise_aniso #gets the anisotropic inverse noise variance
         self.noise_inv = noise**-1. #gets the anisotropic noise variance
 
     def __call__(self, tmap):
