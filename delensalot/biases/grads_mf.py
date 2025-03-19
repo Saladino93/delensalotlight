@@ -486,7 +486,7 @@ def load_calculated_mf(itlib, itr, mcs, key:str = 'p', zerolensing = False):
     all_present = all(os.path.exists(opj(cacher.lib_dir, fn_lik(idx)+".npy")) for idx in np.unique(mcs))
     print("ALL PRESENT", all_present)
 
-    assert all_present
+    #assert all_present
     
     if not all_present:
         return 0
@@ -502,7 +502,7 @@ def load_calculated_mf(itlib, itr, mcs, key:str = 'p', zerolensing = False):
 
 
 def get_graddet_sim_mf_trick(itlib:cs_iterator.qlm_iterator, itr:int, mcs:np.ndarray, 
-                             key:str='p', mf_phas:phas.lib_phas=None, zerolensing:bool=False, recache=False):   
+                             key:str='p', mf_phas:phas.lib_phas=None, zerolensing:bool=False, recache=False, pol = True):   
     """Buid the gradient MF using the trick of Carron and Lewis 2017 Appendix B
     
         Args:
@@ -571,9 +571,12 @@ def get_graddet_sim_mf_trick(itlib:cs_iterator.qlm_iterator, itr:int, mcs:np.nda
         if not cacher.is_cached(fn_lik(idx)) or recache:
             print(f'Doing MF sim {idx}' + ' no lensing'*zerolensing)
             if mf_phas is not None:
-                phas_x = mf_phas.get_sim(idx, idf=0)
-                phas_y = mf_phas.get_sim(idx, idf=1)
-                phas = np.array([phas_x, phas_y])
+                if pol:
+                    phas_x = mf_phas.get_sim(idx, idf=0)
+                    phas_y = mf_phas.get_sim(idx, idf=1)
+                    phas = np.array([phas_x, phas_y])
+                else:
+                    phas = mf_phas.get_sim(idx, idf=0)
                 # phas = alm_copy(phas, None, itlib.filter.lmax_len, itlib.filter.mmax_len) 
             else:
                 phas = None

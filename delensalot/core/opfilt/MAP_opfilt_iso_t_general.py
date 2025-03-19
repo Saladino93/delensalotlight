@@ -244,51 +244,7 @@ class alm_filter_nlev_wl(opfilt_base.alm_filter_wl):
                     
             return np.array(G_total)
 
-
-        if mfkey in [1]: # This should be B^t x, D dC D^t B^t Covi x, x random phases in alm space
-            if phas is None:
-                phas = synalm(np.ones(self.lmax_len + 1, dtype=float), self.lmax_len, self.mmax_len)
-            
-            phas = alm_copy(phas, None, self.lmax_len, self.mmax_len)
-            assert Alm.getlmax(phas.size, self.mmax_len) == self.lmax_len
-            
-            soltn = np.zeros(Alm.getsize(self.lmax_sol, self.mmax_sol), dtype=complex)
-            mchain.solve(soltn, phas, dot_op=self.dot_op()) # X^WF
-            
-            almxfl(phas,  self.transf, self.mmax_len, True) # B^t X 
-            tmap = q_pbgeom.geom.alm2map(phas, self.lmax_len, self.mmax_len, self.ffi.sht_tr, (-1., 1.))
-            gtmap = self._get_gtmap(soltn, q_pbgeom)   # D dC D^t B^t Covi x
-            
-            GC = tmap * gtmap
-            lmax_qlm = self.ffi.lmax_dlm
-            mmax_qlm = self.ffi.mmax_dlm
-            G, C = q_pbgeom.geom.map2alm_spin(GC, 1, lmax_qlm, mmax_qlm, self.ffi.sht_tr, (-1., 1.))
-            del GC
-            fl = - np.sqrt(np.arange(lmax_qlm + 1, dtype=float) * np.arange(1, lmax_qlm + 2))
-            almxfl(G, fl, mmax_qlm, True)
-            almxfl(C, fl, mmax_qlm, True)
-        
-        elif mfkey in [0]: # standard gQE, quite inefficient but simple
-            if phas is None:
-                phas = synalm(np.ones(self.lmax_sol + 1, dtype=float), self.lmax_sol, self.mmax_sol)
-            if noise_phas is None:
-                noise_phas =  synalm(np.ones(self.lmax_len + 1, dtype=float), self.lmax_len, self.mmax_len)
-            
-            # assert Alm.getlmax(phas.size, self.mmax_sol) == self.lmax_sol
-            # assert Alm.getlmax(noise_phas.size, self.mmax_len) == self.lmax_len
-
-            cmb_phas = alm_copy(phas, None, self.lmax_sol, self.mmax_sol)
-            # cmb_phas = phas
-            tlm_dat = self.synalm(cls_filt, cmb_phas=cmb_phas, noise_phase=noise_phas)
-            # Get the WF CMB map
-            soltn = np.zeros(Alm.getsize(self.lmax_sol, self.mmax_sol), dtype=complex)
-            mchain.solve(soltn, tlm_dat, dot_op=self.dot_op())
-            G, C = self.get_qlms(tlm_dat, soltn, q_pbgeom)
-        
-        else:
-            assert 0, mfkey + ' not implemented'
-
-        return G, C
+        return np.array(G_total)
 
     def get_qlms_mf_pred(self, plm:np.ndarray, cls_unl:dict):
         """Return predicted analytical MF
@@ -343,6 +299,18 @@ class alm_filter_nlev_wl(opfilt_base.alm_filter_wl):
         lmax = Alm.getlmax(tlm_wf.size, self.mmax_sol)
         result = self.operators(tlm = tlm_wf, backwards = False, lmax_in = lmax, spin = 0, lmax_out = self.mmax_sol, q_pbgeom = self.ninv_geom if which not in ["p", "o"] else q_pbgeom, which = which, ignore = ["o"] if which == "p" else []) #NOTE: CHECK IGNORE
         return result
+    
+    def _p2h(self, h, lmax):
+        if h == 'p':
+            return np.ones(lmax + 1, dtype=float)
+        elif h == 'k':
+            return 0.5 * np.arange(lmax + 1, dtype=float) * np.arange(1, lmax + 2, dtype=float)
+        elif h == 'd':
+            return np.sqrt(np.arange(lmax + 1, dtype=float) * np.arange(1, lmax + 2), dtype=float)
+        else:
+            assert 0, h + ' not implemented'
+
+    def _h2p(self, h, lmax): return cli(self._p2h(h, lmax))
 
 
 def calc_prep(tlm:np.ndarray, s_cls:dict, ninv_filt:alm_filter_nlev_wl, sht_threads:int=4):

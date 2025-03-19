@@ -105,27 +105,52 @@ class Lensing(Operator):
         #assert alm_wf_leg2 is None
         if tlm_wf_leg2 is None:
             tlm_wf_leg2 = tlm_wf.copy()
-
+ 
         if filter_leg2 is None:
             filter_leg2 = filtr
         
         assert Alm.getlmax(tlm_wf.size, filtr.mmax_sol) == filtr.lmax_sol, (Alm.getlmax(tlm_wf.size, filtr.mmax_sol), filtr.lmax_sol)
         assert Alm.getlmax(tlm_wf_leg2.size, filter_leg2.mmax_sol) == filter_leg2.lmax_sol, (Alm.getlmax(tlm_wf_leg2.size, filter_leg2.mmax_sol), filter_leg2.lmax_sol)
 
-        ivf = filtr._get_irestmap(tlm_dat, tlm_wf, q_pbgeom)
-        gwf = filtr._get_gtmap(tlm_wf_leg2, q_pbgeom.geom)
+        #if tlm_dat is a list, then we need to get the ivf for each map
+        if isinstance(tlm_dat, list):
+            data_maps_1, data_maps_2 = tlm_dat
+        else:
+            data_maps_1 = tlm_dat.copy() #memory inefficient, but need to do this to avoid side effects
+            data_maps_2 = tlm_dat.copy()
 
-        ivf = randomize(filtr, ivf, shift = shift_1)
-        gwf = randomize(filter_leg2, gwf, shift = shift_2)
+        ivf1 = filtr._get_irestmap(data_maps_1, tlm_wf, q_pbgeom, mean_field = mean_field)
+        gwf2 = filtr._get_gtmap(tlm_wf_leg2, q_pbgeom.geom)
 
-        d1 = ivf * gwf
+        ivf1 = randomize(filtr, ivf1, shift = shift_1)
+        gwf2 = randomize(filter_leg2, gwf2, shift = shift_2)
+
+        d12 = ivf1 * gwf2
 
         lmax_qlm, mmax_qlm = filtr.operators.lmax(which = which), filtr.operators.mmax(which = which)
 
         #G, C = q_pbgeom.geom.adjoint_synthesis(d1, 1, lmax_qlm, mmax_qlm, filtr.operators.sht_tr)
-        G, C = q_pbgeom.geom.map2alm_spin(d1, 1, self.ffi.lmax_dlm, self.ffi.mmax_dlm, self.ffi.sht_tr, (-1., 1.))
-        
-        del d1
+        G12, C12 = q_pbgeom.geom.map2alm_spin(d12, 1, self.ffi.lmax_dlm, self.ffi.mmax_dlm, self.ffi.sht_tr, (-1., 1.))
+        del d12
+
+        if not np.allclose(data_maps_1, data_maps_2):
+            ivf2 = filtr._get_irestmap(data_maps_2, tlm_wf_leg2, q_pbgeom, mean_field = mean_field)
+            gwf1 = filtr._get_gtmap(tlm_wf, q_pbgeom.geom)
+
+            ivf2 = randomize(filtr, ivf2, shift = shift_1)
+            gwf1 = randomize(filter_leg2, gwf1, shift = shift_2)
+
+            d21 = ivf2 * gwf1
+
+            G21, C21 = q_pbgeom.geom.map2alm_spin(d21, 1, self.ffi.lmax_dlm, self.ffi.mmax_dlm, self.ffi.sht_tr, (-1., 1.))
+            del d21
+
+            G = G12 + G21
+            C = C12 + C21
+        else:
+            G = G12
+            C = C12
+
         fl = - np.sqrt(np.arange(lmax_qlm + 1, dtype=float) * np.arange(1, lmax_qlm + 2))
         almxfl(G, fl, mmax_qlm, True)
         almxfl(C, fl, mmax_qlm, True)
@@ -278,10 +303,10 @@ class NoiseOperator(Operator):
         assert Alm.getlmax(tlm_wf.size, filtr.mmax_sol) == filtr.lmax_sol, (Alm.getlmax(tlm_wf.size, filtr.mmax_sol), filtr.lmax_sol)
         assert Alm.getlmax(tlm_wf_leg2.size, filter_leg2.mmax_sol) == filter_leg2.lmax_sol, (Alm.getlmax(tlm_wf_leg2.size, filter_leg2.mmax_sol), filter_leg2.lmax_sol)
 
-        ivf = filtr._get_irestmap(tlm_dat, tlm_wf, q_pbgeom)
+        ivf = filtr._get_irestmap(tlm_dat, tlm_wf, q_pbgeom, mean_field = mean_field)
 
         if not np.allclose(tlm_wf_leg2, tlm_wf):
-            ivf2 = filter_leg2._get_irestmap(tlm_dat, tlm_wf_leg2, q_pbgeom)
+            ivf2 = filter_leg2._get_irestmap(tlm_dat, tlm_wf_leg2, q_pbgeom, mean_field = mean_field)
             ivf2 = randomize(filter_leg2, ivf2, shift = shift_2)
         else:
             ivf = randomize(filtr, ivf, shift = shift_1)
